@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#02060c">
+<meta name="mobile-web-app-capable" content="yes">
+<title>J.A.R.V.I.S.</title>
+<style>
+  :root { --c: #3fd8ff; --c2: #0a84ff; --bg: #02060c; --txt: #cfefff; --red: #ff4d5e; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--txt);
+    font-family: "Segoe UI", Roboto, system-ui, sans-serif; overflow: hidden; }
+  #scene { position: fixed; inset: 0; }
+  #top { position: fixed; top: 0; left: 0; right: 0; text-align: center; padding: 22px 12px 0; pointer-events: none; }
+  #top h1 { margin: 0; font-weight: 300; letter-spacing: .55em; font-size: 26px; color: var(--c);
+    text-shadow: 0 0 18px rgba(63,216,255,.7); padding-left: .55em; }
+  #status { margin-top: 8px; font-size: 13px; letter-spacing: .2em; text-transform: uppercase; opacity: .8; }
+  #say { margin: 14px auto 0; max-width: 560px; font-size: 15px; line-height: 1.4; opacity: .85; min-height: 2.8em; padding: 0 10px; }
+  #bar { position: fixed; left: 0; right: 0; bottom: 0; display: flex; gap: 10px; justify-content: center;
+    padding: 16px 12px calc(18px + env(safe-area-inset-bottom)); flex-wrap: wrap; }
+  button { font: inherit; color: var(--txt); background: rgba(10,40,60,.55); border: 1px solid rgba(63,216,255,.45);
+    border-radius: 999px; padding: 13px 20px; font-size: 15px; letter-spacing: .05em; cursor: pointer;
+    backdrop-filter: blur(6px); }
+  button:active { transform: scale(.97); }
+  button.main { background: rgba(63,216,255,.18); border-color: var(--c); box-shadow: 0 0 18px rgba(63,216,255,.25); }
+  button.on { background: rgba(255,77,94,.2); border-color: var(--red); }
+  button[hidden] { display: none; }
+  #panel { position: fixed; inset: 0; background: rgba(2,6,12,.94); display: none; overflow: auto; padding: 24px 18px 40px; z-index: 5; }
+  #panel.open { display: block; }
+  #panel .box { max-width: 560px; margin: 0 auto; }
+  #panel h2 { color: var(--c); font-weight: 400; letter-spacing: .2em; font-size: 18px; }
+  label { display: block; margin: 18px 0 6px; font-size: 13px; letter-spacing: .08em; opacity: .85; text-transform: uppercase; }
+  input, select, textarea { width: 100%; font: inherit; font-size: 15px; color: var(--txt); background: #071824;
+    border: 1px solid rgba(63,216,255,.35); border-radius: 10px; padding: 12px; }
+  textarea { min-height: 110px; resize: vertical; }
+  .hint { font-size: 13px; opacity: .65; margin-top: 6px; line-height: 1.4; }
+  .row { display: flex; gap: 10px; margin-top: 22px; flex-wrap: wrap; }
+  a { color: var(--c); }
+</style>
+<script type="importmap">
+{ "imports": { "three": "https://unpkg.com/three@0.165.0/build/three.module.js" } }
+</script>
+</head>
+<body>
+<div id="scene"></div>
+<div id="top">
+  <h1>JARVIS</h1>
+  <div id="status">Spento</div>
+  <div id="say"></div>
+</div>
+<div id="bar">
+  <button id="btnPower" class="main">Accendi Jarvis</button>
+  <button id="btnMute" hidden>Muto</button>
+  <button id="btnXR" hidden>Entra nella stanza</button>
+  <button id="btnSet" aria-label="Impostazioni">⚙</button>
+</div>
+
+<div id="panel">
+  <div class="box">
+    <h2>IMPOSTAZIONI</h2>
+    <label for="key">Chiave API di Gemini</label>
+    <input id="key" type="password" autocomplete="off" placeholder="Incolla qui la chiave (inizia con AIza...)">
+    <div class="hint">Resta salvata solo su questo dispositivo, non va online da nessuna parte. La trovi su
+      <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a>.</div>
+
+    <label for="voice">Voce</label>
+    <select id="voice">
+      <option value="Charon">Charon (profonda, consigliata)</option>
+      <option value="Orus">Orus (decisa)</option>
+      <option value="Fenrir">Fenrir (energica)</option>
+      <option value="Puck">Puck (allegra)</option>
+      <option value="Kore">Kore (femminile)</option>
+    </select>
+
+    <label for="model">Modello</label>
+    <select id="model">
+      <option value="auto">Automatico (il migliore disponibile)</option>
+      <option value="gemini-3.8-live">Gemini 3.8 Live</option>
+      <option value="gemini-3.8-live-extended-thinking">Gemini 3.8 Live (ragionamento esteso)</option>
+      <option value="gemini-3.1-flash-live-preview">Gemini 3.1 Flash Live</option>
+      <option value="gemini-2.5-flash-native-audio-preview-12-2025">Gemini 2.5 Flash Live</option>
+    </select>
+
+    <label for="notes">Cose che Jarvis deve sapere</label>
+    <textarea id="notes" placeholder="Es. i tuoi giochi, i tuoi progetti, come vuoi che risponda..."></textarea>
+    <div class="hint">Jarvis ricorda anche da solo le ultime conversazioni fatte qui.</div>
+
+    <div class="row">
+      <button id="btnSave" class="main">Salva</button>
+      <button id="btnForget">Cancella ricordi</button>
+      <button id="btnClose">Chiudi</button>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+
+/* ---------------- archivio locale ---------------- */
+const store = {
+  get(k, d) { try { const v = localStorage.getItem('jarvis_' + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem('jarvis_' + k, JSON.stringify(v)); } catch {} }
+};
+
+const $ = (id) => document.getElementById(id);
+const ui = { status: $('status'), say: $('say'), power: $('btnPower'), mute: $('btnMute'), xr: $('btnXR') };
+
+/* ---------------- scena 3D ---------------- */
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setClearColor(0x000000, 0);
+renderer.xr.enabled = true;
+$('scene').appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.01, 50);
+camera.position.set(0, 1.4, 0);
+camera.lookAt(0, 1.4, -0.8);
+
+// gruppo della sfera (si sposta tutto insieme)
+const orb = new THREE.Group();
+orb.position.set(0, 1.4, -0.8);
+scene.add(orb);
+
+const R = 0.17;            // raggio in metri
+const N = 4200;            // particelle
+const pos = new Float32Array(N * 3), seed = new Float32Array(N);
+const golden = Math.PI * (3 - Math.sqrt(5));
+for (let i = 0; i < N; i++) {
+  const y = 1 - (i / (N - 1)) * 2, r = Math.sqrt(1 - y * y), th = golden * i;
+  pos[i * 3] = Math.cos(th) * r * R; pos[i * 3 + 1] = y * R; pos[i * 3 + 2] = Math.sin(th) * r * R;
+  seed[i] = Math.random();
+}
+const geo = new THREE.BufferGeometry();
+geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+geo.setAttribute('seed', new THREE.BufferAttribute(seed, 1));
+
+const uniforms = {
+  uTime: { value: 0 }, uLevel: { value: 0 }, uListen: { value: 0 },
+  uScale: { value: 800 }, uColor: { value: new THREE.Color(0x3fd8ff) }, uMuted: { value: 0 }
+};
+const mat = new THREE.ShaderMaterial({
+  uniforms, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+  vertexShader: `
+    uniform float uTime, uLevel, uListen, uScale;
+    attribute float seed;
+    varying float vA;
+    void main() {
+      vec3 n = normalize(position);
+      float w = sin(uTime * 3.0 + seed * 40.0 + position.y * 60.0) * 0.5 + 0.5;
+      float burst = uLevel * (0.35 + 0.65 * w) * 0.09;
+      float breathe = 0.004 * sin(uTime * 1.3 + seed * 6.28);
+      float listen = uListen * 0.012 * w;
+      vec3 p = position + n * (burst + breathe + listen);
+      vec4 mv = modelViewMatrix * vec4(p, 1.0);
+      gl_Position = projectionMatrix * mv;
+      gl_PointSize = (0.0045 + seed * 0.003 + uLevel * 0.003) * uScale / -mv.z;
+      vA = 0.45 + 0.55 * w;
+    }`,
+  fragmentShader: `
+    uniform vec3 uColor; uniform float uMuted;
+    varying float vA;
+    void main() {
+      float d = length(gl_PointCoord - 0.5);
+      if (d > 0.5) discard;
+      float a = smoothstep(0.5, 0.0, d) * vA;
+      vec3 c = mix(uColor, vec3(1.0, 0.3, 0.37), uMuted);
+      gl_FragColor = vec4(c, a);
+    }`
+});
+const points = new THREE.Points(geo, mat);
+orb.add(points);
+
+// nucleo luminoso
+const core = new THREE.Mesh(new THREE.SphereGeometry(R * 0.35, 24, 24),
+  new THREE.MeshBasicMaterial({ color: 0x3fd8ff, transparent: true, opacity: 0.12, blending: THREE.AdditiveBlending, depthWrite: false }));
+orb.add(core);
+
+// sfera invisibile per "afferrare"
+const hit = new THREE.Mesh(new THREE.SphereGeometry(R * 1.35, 12, 12), new THREE.MeshBasicMaterial({ visible: false }));
+orb.add(hit);
+
+// etichette (titolo + stato) disegnate su tela
+function makeLabel(w, h) {
+  const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+  const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace;
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w / 1000, h / 1000),
+    new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }));
+  return { cv, ctx: cv.getContext('2d'), tex, mesh };
+}
+const title = makeLabel(420, 90);
+title.ctx.font = '300 58px Segoe UI, Roboto, sans-serif';
+title.ctx.textAlign = 'center'; title.ctx.textBaseline = 'middle';
+title.ctx.shadowColor = 'rgba(63,216,255,.9)'; title.ctx.shadowBlur = 18;
+title.ctx.fillStyle = '#3fd8ff';
+title.ctx.letterSpacing = '22px';
+title.ctx.fillText('JARVIS', 210, 46);
+title.tex.needsUpdate = true;
+title.mesh.position.set(0, R + 0.09, 0);
+orb.add(title.mesh);
+
+const label = makeLabel(600, 70);
+label.mesh.position.set(0, -R - 0.06, 0);
+orb.add(label.mesh);
+function drawLabel(text) {
+  const c = label.ctx; c.clearRect(0, 0, 600, 70);
+  c.font = '28px Segoe UI, Roboto, sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+  c.fillStyle = 'rgba(207,239,255,.85)'; c.fillText(text.toUpperCase(), 300, 35);
+  label.tex.needsUpdate = true;
+}
+
+// pulsante muto (anello sotto la sfera)
+const muteBtn = new THREE.Group();
+muteBtn.position.set(0, -R - 0.13, 0);
+const ring = new THREE.Mesh(new THREE.TorusGeometry(0.028, 0.004, 12, 48),
+  new THREE.MeshBasicMaterial({ color: 0x3fd8ff, transparent: true, opacity: .9 }));
+const dot = new THREE.Mesh(new THREE.CircleGeometry(0.012, 24),
+  new THREE.MeshBasicMaterial({ color: 0x3fd8ff, transparent: true, opacity: .7 }));
+const muteHit = new THREE.Mesh(new THREE.SphereGeometry(0.045, 10, 10), new THREE.MeshBasicMaterial({ visible: false }));
+muteBtn.add(ring, dot, muteHit);
+orb.add(muteBtn);
+
+/* ---------------- controller e mani (WebXR) ---------------- */
+const tmpM = new THREE.Matrix4(), ray = new THREE.Raycaster();
+const lineGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -1)]);
+const controllers = [0, 1].map((i) => {
+  const c = renderer.xr.getController(i);
+  const line = new THREE.Line(lineGeo, new THREE.LineBasicMaterial({ color: 0x3fd8ff, transparent: true, opacity: .45 }));
+  line.scale.z = 0.6; c.add(line);
+  c.userData = { grabbing: false, src: null };
+  c.addEventListener('connected', (e) => { c.userData.src = e.data; });
+  c.addEventListener('disconnected', () => { c.userData.src = null; });
+  c.addEventListener('selectstart', () => onSelectStart(c));
+  c.addEventListener('selectend', () => onSelectEnd(c));
+  scene.add(c);
+  return c;
+});
+function aim(c) {
+  tmpM.identity().extractRotation(c.matrixWorld);
+  ray.ray.origin.setFromMatrixPosition(c.matrixWorld);
+  ray.ray.direction.set(0, 0, -1).applyMatrix4(tmpM);
+}
+function onSelectStart(c) {
+  aim(c);
+  if (ray.intersectObject(muteHit, false).length) { toggleMute(); return; }
+  if (ray.intersectObject(hit, false).length && !controllers.some((o) => o.userData.grabbing)) {
+    c.attach(orb); c.userData.grabbing = true;
+  }
+}
+function onSelectEnd(c) {
+  if (c.userData.grabbing) { scene.attach(orb); c.userData.grabbing = false; store.set('orbPos', orb.position.toArray()); }
+}
+
+/* ---------------- audio: uscita (voce di Jarvis) ---------------- */
+let outCtx = null, outGain = null, analyser = null, nextTime = 0;
+const playing = new Set();
+const levelBuf = new Uint8Array(256);
+function ensureOut() {
+  if (outCtx) return;
+  outCtx = new (window.AudioContext || window.webkitAudioContext)();
+  outGain = outCtx.createGain();
+  analyser = outCtx.createAnalyser(); analyser.fftSize = 512;
+  outGain.connect(analyser); analyser.connect(outCtx.destination);
+}
+function playPCM(b64) {
+  const bin = atob(b64), n = bin.length >> 1;
+  const f = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    let s = bin.charCodeAt(i * 2) | (bin.charCodeAt(i * 2 + 1) << 8);
+    if (s >= 32768) s -= 65536;
+    f[i] = s / 32768;
+  }
+  const buf = outCtx.createBuffer(1, n, 24000);
+  buf.copyToChannel(f, 0);
+  const src = outCtx.createBufferSource();
+  src.buffer = buf; src.connect(outGain);
+  const t = Math.max(outCtx.currentTime + 0.03, nextTime);
+  src.start(t); nextTime = t + buf.duration;
+  playing.add(src); src.onended = () => playing.delete(src);
+}
+function stopPlayback() {
+  playing.forEach((s) => { try { s.stop(); } catch {} });
+  playing.clear(); nextTime = 0;
+}
+function outLevel() {
+  if (!analyser || !playing.size) return 0;
+  analyser.getByteTimeDomainData(levelBuf);
+  let sum = 0;
+  for (let i = 0; i < levelBuf.length; i++) { const v = (levelBuf[i] - 128) / 128; sum += v * v; }
+  return Math.min(1, Math.sqrt(sum / levelBuf.length) * 4.5);
+}
+
+/* ---------------- audio: microfono ---------------- */
+const WORKLET = `
+class Mic extends AudioWorkletProcessor {
+  constructor() { super(); this.ratio = sampleRate / 16000; this.pos = 0; this.out = []; this.lvl = 0; }
+  process(inputs) {
+    const ch = inputs[0] && inputs[0][0];
+    if (!ch) return true;
+    let peak = 0;
+    for (let i = 0; i < ch.length; i++) { const a = Math.abs(ch[i]); if (a > peak) peak = a; }
+    this.lvl = Math.max(peak, this.lvl * 0.9);
+    while (this.pos < ch.length) {
+      const i = Math.floor(this.pos), fr = this.pos - i;
+      const s = i + 1 < ch.length ? ch[i] * (1 - fr) + ch[i + 1] * fr : ch[i];
+      this.out.push(Math.max(-1, Math.min(1, s)));
+      this.pos += this.ratio;
+    }
+    this.pos -= ch.length;
+    if (this.out.length >= 1600) {
+      const pcm = new Int16Array(this.out.length);
+      for (let i = 0; i < this.out.length; i++) pcm[i] = this.out[i] * 32767;
+      this.port.postMessage({ pcm: pcm.buffer, lvl: this.lvl }, [pcm.buffer]);
+      this.out = [];
+    }
+    return true;
+  }
+}
+registerProcessor('mic', Mic);`;
+let micCtx = null, micStream = null, micNode = null, micLevel = 0;
+async function startMic() {
+  micStream = await navigator.mediaDevices.getUserMedia({
+    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 }
+  });
+  micCtx = new (window.AudioContext || window.webkitAudioContext)();
+  const url = URL.createObjectURL(new Blob([WORKLET], { type: 'application/javascript' }));
+  await micCtx.audioWorklet.addModule(url);
+  const srcNode = micCtx.createMediaStreamSource(micStream);
+  micNode = new AudioWorkletNode(micCtx, 'mic');
+  const sink = micCtx.createGain(); sink.gain.value = 0;
+  srcNode.connect(micNode); micNode.connect(sink); sink.connect(micCtx.destination);
+  micNode.port.onmessage = (e) => {
+    micLevel = e.data.lvl;
+    if (!muted && ws && ws.readyState === 1 && ready) {
+      ws.send(JSON.stringify({ realtimeInput: { audio: { data: b64(e.data.pcm), mimeType: 'audio/pcm;rate=16000' } } }));
+    }
+  };
+}
+function stopMic() {
+  try { micStream && micStream.getTracks().forEach((t) => t.stop()); } catch {}
+  try { micCtx && micCtx.close(); } catch {}
+  micStream = micCtx = micNode = null; micLevel = 0;
+}
+function b64(buf) {
+  const u = new Uint8Array(buf); let s = '';
+  for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+
+/* ---------------- memoria ---------------- */
+function memory() { return store.get('mem', []); }
+function remember(u, j) {
+  u = (u || '').trim(); j = (j || '').trim();
+  if (!u && !j) return;
+  const m = memory(); m.push({ u, j, t: Date.now() });
+  store.set('mem', m.slice(-60));
+}
+function systemPrompt() {
+  const notes = store.get('notes', '');
+  const past = memory().slice(-15).map((x) => {
+    const d = new Date(x.t).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    return `[${d}] Signore: ${x.u.slice(0, 300)}\nJarvis: ${x.j.slice(0, 300)}`;
+  }).join('\n');
+  const where = renderer.xr.isPresenting ? 'nel visore Meta Quest, come una sfera di particelle in realtà mista'
+    : 'sul telefono del Signore';
+  return `Sei J.A.R.V.I.S., l'assistente personale del Signore, ispirato al J.A.R.V.I.S. di Iron Man.
+Parli sempre in italiano e chiami l'utente sempre "Signore". Tono: elegante, calmo, leggermente ironico, molto competente.
+Risposte brevi e naturali, adatte a essere ascoltate a voce: niente elenchi lunghi, niente simboli, niente markdown.
+Ora ti trovi ${where}. Data e ora attuali: ${new Date().toLocaleString('it-IT')}.
+In questa versione puoi conversare, ragionare, consigliare e ricordare, ma NON puoi controllare il computer né aprire app.
+Se il Signore ti chiede di aprire app, scrivere messaggi o agire sul PC, spiegagli con garbo che questa funzione arriverà
+con il collegamento al Jarvis del computer, e intanto aiutalo come puoi.
+Se il Signore dice "silenzio", "muto" o simili, chiama la funzione muto.
+${notes ? '\nCose che sai del Signore:\n' + notes : ''}
+${past ? '\nUltime conversazioni con il Signore (usale come ricordi, non ripeterle):\n' + past : ''}`;
+}
+
+/* ---------------- connessione a Gemini Live ---------------- */
+const MODELS = ['gemini-3.8-live', 'gemini-3.1-flash-live-preview', 'gemini-2.5-flash-native-audio-preview-12-2025'];
+let lastLight = '';
+let ws = null, ready = false, running = false, muted = false, speaking = false;
+let attempts = [], attemptIdx = 0, resumeHandle = null, uText = '', jText = '', retries = 0;
+
+function setStatus(s) { lastLight = s; ui.status.textContent = s; drawLabel(s); }
+function setSay(s) { ui.say.textContent = s; }
+
+function buildAttempts() {
+  const chosen = store.get('model', 'auto');
+  const list = chosen === 'auto' ? MODELS : [chosen, ...MODELS.filter((m) => m !== chosen)];
+  attempts = [];
+  list.forEach((m) => { attempts.push({ model: m, full: true }); attempts.push({ model: m, full: false }); });
+  attemptIdx = 0;
+}
+
+function connect() {
+  const key = store.get('key', '');
+  if (!key) { openPanel(); setStatus('Serve la chiave API'); return; }
+  const a = attempts[attemptIdx];
+  if (!a) { stop(); setStatus('Non riesco a collegarmi'); setSay('Controlla la chiave API e la connessione, Signore.'); return; }
+  ready = false;
+  setStatus('Collegamento…');
+  const url = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=' + encodeURIComponent(key);
+  const sock = new WebSocket(url);
+  ws = sock;
+  sock.onopen = () => {
+    const setup = {
+      model: 'models/' + a.model,
+      generationConfig: {
+        responseModalities: ['AUDIO'],
+        speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: store.get('voice', 'Charon') } } }
+      },
+      systemInstruction: { parts: [{ text: systemPrompt() }] }
+    };
+    if (a.full) {
+      setup.inputAudioTranscription = {};
+      setup.outputAudioTranscription = {};
+      setup.tools = [{ functionDeclarations: [{ name: 'muto', description: 'Spegne il microfono quando il Signore chiede silenzio o muto.' }] }];
+      setup.sessionResumption = resumeHandle ? { handle: resumeHandle } : {};
+    }
+    sock.send(JSON.stringify({ setup }));
+  };
+  sock.onmessage = async (ev) => {
+    if (sock !== ws) return;
+    let txt = ev.data;
+    if (typeof txt !== 'string') txt = await (txt.text ? txt.text() : new Response(txt).text());
+    let msg; try { msg = JSON.parse(txt); } catch { return; }
+    handle(msg);
+  };
+  sock.onclose = (ev) => {
+    if (sock !== ws) return;
+    const wasReady = ready; ready = false;
+    if (!running) return;
+    if (!wasReady) {
+      // il modello o la configurazione non vanno: provo il prossimo
+      console.warn('Tentativo fallito', a, ev.code, ev.reason);
+      if (/key|API_KEY|permission|unauth/i.test(ev.reason || '')) {
+        stop(); setStatus('Chiave API non valida'); setSay('La chiave non funziona, Signore. Controllala nelle impostazioni.');
+        return;
+      }
+      attemptIdx++; connect(); return;
+    }
+    // sessione scaduta o rete persa: mi ricollego
+    if (retries++ < 8) { setStatus('Riconnessione…'); setTimeout(connect, 600); }
+    else { stop(); setStatus('Connessione persa'); }
+  };
+  sock.onerror = () => {};
+}
+
+function handle(msg) {
+  if (msg.setupComplete) {
+    ready = true; retries = 0;
+    setStatus(muted ? 'Muto' : 'In ascolto');
+    store.set('lastModel', attempts[attemptIdx].model);
+    return;
+  }
+  if (msg.sessionResumptionUpdate && msg.sessionResumptionUpdate.newHandle) {
+    resumeHandle = msg.sessionResumptionUpdate.newHandle;
+  }
+  if (msg.goAway) { try { ws.close(); } catch {} return; }
+  if (msg.toolCall && msg.toolCall.functionCalls) {
+    const responses = msg.toolCall.functionCalls.map((fc) => {
+      if (fc.name === 'muto') setTimeout(() => { if (!muted) toggleMute(); }, 1200);
+      return { id: fc.id, name: fc.name, response: { result: 'ok' } };
+    });
+    ws.send(JSON.stringify({ toolResponse: { functionResponses: responses } }));
+    return;
+  }
+  const sc = msg.serverContent;
+  if (!sc) return;
+  if (sc.interrupted) { stopPlayback(); speaking = false; }
+  if (sc.inputTranscription && sc.inputTranscription.text) { uText += sc.inputTranscription.text; }
+  if (sc.outputTranscription && sc.outputTranscription.text) { jText += sc.outputTranscription.text; setSay(jText); }
+  if (sc.modelTurn && sc.modelTurn.parts) {
+    for (const p of sc.modelTurn.parts) {
+      if (p.inlineData && p.inlineData.data && /audio/.test(p.inlineData.mimeType || 'audio')) {
+        ensureOut(); playPCM(p.inlineData.data); speaking = true;
+      }
+      if (p.text && !jText) setSay(p.text);
+    }
+  }
+  if (sc.turnComplete || sc.generationComplete) {
+    if (sc.turnComplete) { remember(uText, jText); uText = ''; jText = ''; }
+  }
+}
+
+/* ---------------- comandi ---------------- */
+async function start() {
+  if (running) return;
+  if (!store.get('key', '')) { openPanel(); return; }
+  try {
+    ensureOut(); await outCtx.resume();
+    await startMic();
+  } catch (e) {
+    console.warn('Microfono:', e);
+    stopMic();
+    setStatus('Microfono non disponibile');
+    setSay('Devo poter usare il microfono, Signore: consenti l\'accesso quando il browser lo chiede.');
+    return;
+  }
+  running = true; resumeHandle = null; retries = 0;
+  buildAttempts(); connect();
+  ui.power.textContent = 'Spegni'; ui.power.classList.remove('main');
+  ui.mute.hidden = false; refreshXRButton();
+}
+function stop() {
+  running = false; ready = false;
+  const s = ws; ws = null; try { s && s.close(); } catch {}
+  stopMic(); stopPlayback(); speaking = false;
+  ui.power.textContent = 'Accendi Jarvis'; ui.power.classList.add('main');
+  ui.mute.hidden = true; ui.xr.hidden = true;
+  setStatus('Spento');
+}
+function toggleMute() {
+  muted = !muted;
+  uniforms.uMuted.value = muted ? 1 : 0;
+  ring.material.color.set(muted ? 0xff4d5e : 0x3fd8ff); dot.material.color.set(muted ? 0xff4d5e : 0x3fd8ff);
+  ui.mute.classList.toggle('on', muted); ui.mute.textContent = muted ? 'Riattiva microfono' : 'Muto';
+  if (muted && ws && ws.readyState === 1 && ready) { try { ws.send(JSON.stringify({ realtimeInput: { audioStreamEnd: true } })); } catch {} }
+  if (running) setStatus(muted ? 'Muto' : (ready ? 'In ascolto' : 'Collegamento…'));
+}
+
+/* ---------------- realtà mista ---------------- */
+let xrOK = false;
+if (navigator.xr) {
+  navigator.xr.isSessionSupported('immersive-ar').then((ok) => { xrOK = ok; refreshXRButton(); }).catch(() => {});
+}
+function refreshXRButton() { ui.xr.hidden = !(xrOK && running); }
+async function enterXR() {
+  try {
+    const session = await navigator.xr.requestSession('immersive-ar', {
+      requiredFeatures: ['local-floor'], optionalFeatures: ['hand-tracking']
+    });
+    renderer.xr.setReferenceSpaceType('local-floor');
+    await renderer.xr.setSession(session);
+    uniforms.uScale.value = 1100;
+    const saved = store.get('orbPos', null);
+    if (saved) orb.position.fromArray(saved); else orb.position.set(0, 1.35, -0.75);
+    session.addEventListener('end', () => { scene.attach(orb); controllers.forEach((c) => (c.userData.grabbing = false)); setTimeout(onResize, 50); });
+  } catch (e) {
+    setSay('Non riesco a entrare nella stanza: ' + (e && e.message ? e.message : e));
+  }
+}
+
+/* ---------------- pannello impostazioni ---------------- */
+function openPanel() {
+  $('key').value = store.get('key', '');
+  $('voice').value = store.get('voice', 'Charon');
+  $('model').value = store.get('model', 'auto');
+  $('notes').value = store.get('notes', '');
+  $('panel').classList.add('open');
+}
+function closePanel() { $('panel').classList.remove('open'); }
+$('btnSet').onclick = openPanel;
+$('btnClose').onclick = closePanel;
+$('btnSave').onclick = () => {
+  store.set('key', $('key').value.trim());
+  store.set('voice', $('voice').value);
+  store.set('model', $('model').value);
+  store.set('notes', $('notes').value.trim());
+  closePanel();
+  if (running) { stop(); setSay('Impostazioni salvate. Riaccendimi, Signore.'); }
+  else setSay('Impostazioni salvate, Signore.');
+};
+$('btnForget').onclick = () => { store.set('mem', []); setSay('Ricordi cancellati.'); };
+ui.power.onclick = () => (running ? stop() : start());
+ui.mute.onclick = toggleMute;
+ui.xr.onclick = enterXR;
+
+/* ---------------- ciclo di disegno ---------------- */
+function onResize() {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  uniforms.uScale.value = (window.innerHeight * renderer.getPixelRatio()) / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)));
+  if (!renderer.xr.isPresenting) orb.position.set(0, 1.4, camera.aspect < 1 ? -1.45 : -0.9);
+}
+window.addEventListener('resize', onResize);
+onResize();
+
+const clock = new THREE.Clock();
+let level = 0, spin = 0;
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(clock.getDelta(), 0.05), t = clock.elapsedTime;
+  const target = outLevel();
+  level += (target - level) * (target > level ? 0.45 : 0.12);
+  if (!playing.size) speaking = false;
+  if (running && ready && !muted) setStatusLight(speaking ? 'Parla' : 'In ascolto');
+  uniforms.uTime.value = t;
+  uniforms.uLevel.value = level;
+  uniforms.uListen.value += ((muted || speaking ? 0 : Math.min(1, micLevel * 6)) - uniforms.uListen.value) * 0.2;
+  spin += dt * (0.25 + level * 1.6);
+  points.rotation.y = spin; points.rotation.x = Math.sin(t * 0.2) * 0.15;
+  core.material.opacity = 0.08 + level * 0.35;
+  core.scale.setScalar(1 + level * 0.6);
+  // le scritte guardano sempre verso di te
+  const cam = renderer.xr.isPresenting ? renderer.xr.getCamera() : camera;
+  const cp = new THREE.Vector3().setFromMatrixPosition(cam.matrixWorld);
+  [title.mesh, label.mesh, muteBtn].forEach((m) => { m.visible = renderer.xr.isPresenting; m.lookAt(cp); });
+  // con la levetta avvicini/allontani la sfera mentre la tieni
+  controllers.forEach((c) => {
+    const gp = c.userData.src && c.userData.src.gamepad;
+    if (c.userData.grabbing && gp && gp.axes.length >= 4 && Math.abs(gp.axes[3]) > 0.2) {
+      orb.position.z = THREE.MathUtils.clamp(orb.position.z + gp.axes[3] * dt * 0.8, -2.5, -0.15);
+    }
+  });
+  renderer.render(scene, camera);
+});
+function setStatusLight(s) { if (s !== lastLight) setStatus(s); }
+
+drawLabel('Spento');
+if (!store.get('key', '')) setSay('Benvenuto, Signore. Tocca ⚙ e inserisci la chiave di Gemini per iniziare.');
+</script>
+</body>
+</html>
