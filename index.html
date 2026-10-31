@@ -64,6 +64,11 @@
     <div class="hint">Resta salvata solo su questo dispositivo, non va online da nessuna parte. La trovi su
       <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a>.</div>
 
+    <label for="gh">Codice GitHub (memoria condivisa col PC)</label>
+    <input id="gh" type="password" autocomplete="off" placeholder="Incolla il codice che inizia con ghp_">
+    <div class="hint" id="ghStato">Con questo codice la sfera e il Jarvis del PC condividono la memoria, e la sfera può
+      dare ordini al PC (e al Meta Quest collegato al PC).</div>
+
     <label for="voice">Voce</label>
     <select id="voice">
       <option value="Charon">Charon (profonda, consigliata)</option>
@@ -351,11 +356,169 @@ function b64(buf) {
 
 /* ---------------- memoria ---------------- */
 function memory() { return store.get('mem', []); }
+function newId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 function remember(u, j) {
   u = (u || '').trim(); j = (j || '').trim();
   if (!u && !j) return;
-  const m = memory(); m.push({ u, j, t: Date.now() });
-  store.set('mem', m.slice(-60));
+  const m = memory(); m.push({ id: newId(), u, j, t: Date.now() });
+  store.set('mem', m.slice(-200));
+  cloud.pushSoon();
+}
+
+/* ---------------- memoria condivisa col PC (progetto privato GitHub "jarvis-memoria") ---------------- */
+const cloud = {
+  repo: null, sha: {}, pc: null, timer: null,
+  token() { return store.get('gh', ''); },
+  async api(method, path, body) {
+    const r = await fetch('https://api.github.com' + path, {
+      method, cache: 'no-store',
+      headers: { 'Authorization': 'Bearer ' + this.token(), 'Accept': 'application/vnd.github+json',
+                 ...(body ? { 'Content-Type': 'application/json' } : {}) },
+      body: body ? JSON.stringify(body) : undefined
+    });
+    return r;
+  },
+  enc(str) {
+    const b = new TextEncoder().encode(str); let s = '';
+    for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000));
+    return btoa(s);
+  },
+  dec(b64) { return new TextDecoder().decode(Uint8Array.from(atob((b64 || '').replace(/\s/g, '')), (c) => c.charCodeAt(0))); },
+  async prepare() {
+    if (this.repo) return true;
+    if (!this.token()) return false;
+    const u = await this.api('GET', '/user');
+    if (!u.ok) throw new Error(u.status === 401 ? 'codice GitHub non valido' : 'GitHub ' + u.status);
+    const login = (await u.json()).login;
+    const repo = login + '/jarvis-memoria';
+    const r = await this.api('GET', '/repos/' + repo);
+    if (r.status === 404) {
+      const c = await this.api('POST', '/user/repos', { name: 'jarvis-memoria', private: true, auto_init: true,
+        description: 'Memoria condivisa di Jarvis (PC + telefono)' });
+      if (!c.ok && c.status !== 422) throw new Error('non riesco a creare il progetto privato (' + c.status + ')');
+      await new Promise((ok) => setTimeout(ok, 2000));
+    }
+    this.repo = repo;
+    return true;
+  },
+  async read(name) {
+    const r = await this.api('GET', `/repos/${this.repo}/contents/${name}`);
+    if (r.status === 404) { delete this.sha[name]; return null; }
+    if (!r.ok) throw new Error('lettura ' + name + ': ' + r.status);
+    const j = await r.json(); this.sha[name] = j.sha;
+    try { return JSON.parse(this.dec(j.content)); } catch { return null; }
+  },
+  async write(name, mergeFn, msg) {
+    for (let i = 0; i < 4; i++) {
+      const attuale = await this.read(name);
+      const dati = mergeFn(attuale);
+      const body = { message: msg || 'sfera di Jarvis', content: this.enc(JSON.stringify(dati, null, 1)) };
+      if (this.sha[name]) body.sha = this.sha[name];
+      const r = await this.api('PUT', `/repos/${this.repo}/contents/${name}`, body);
+      if (r.ok) { this.sha[name] = (await r.json()).content.sha; return true; }
+      if (r.status !== 409 && r.status !== 422) throw new Error('scrittura ' + name + ': ' + r.status);
+    }
+    return false;
+  },
+  async sync() {                      // scarica memoria del PC + conversazioni degli altri dispositivi
+    if (!(await this.prepare())) return false;
+    const [pc, tel] = await Promise.all([this.read('pc.json'), this.read('telefono.json')]);
+    this.pc = pc;
+    if (tel && Array.isArray(tel.conversazioni)) {
+      const mie = memory(); const ids = new Set(mie.map((x) => x.id));
+      const unite = mie.concat(tel.conversazioni.filter((x) => x.id && !ids.has(x.id)));
+      unite.sort((a, b) => a.t - b.t); store.set('mem', unite.slice(-200));
+    }
+    return true;
+  },
+  pushSoon() {
+    if (!this.token()) return;
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => this.push().catch((e) => console.warn('memoria condivisa:', e)), 4000);
+  },
+  async push() {
+    if (!(await this.prepare())) return;
+    const mie = memory().map((x) => ({ ...x, id: x.id || (x.id = newId()) }));
+    store.set('mem', mie);
+    await this.write('telefono.json', (att) => {
+      const lista = (att && att.conversazioni) || []; const ids = new Set(lista.map((x) => x.id));
+      const unite = lista.concat(mie.filter((x) => !ids.has(x.id))).sort((a, b) => a.t - b.t).slice(-300);
+      return { aggiornato: Date.now(), conversazioni: unite };
+    }, 'conversazioni dal telefono');
+  },
+  async sendCommand(testo) {
+    if (!(await this.prepare())) return { id: null };
+    const id = newId();
+    await this.write('comandi.json', (att) => {
+      const lista = ((att && att.comandi) || []).filter((c) => Date.now() - c.t < 30 * 60000);
+      lista.push({ id, t: Date.now(), testo });
+      return { comandi: lista.slice(-20) };
+    }, 'ordine dalla sfera');
+    return { id };
+  },
+  async cancelCommand(id) {
+    await this.write('comandi.json', (att) => ({ comandi: ((att && att.comandi) || []).filter((c) => c.id !== id) }),
+      'ordine annullato');
+  },
+  async answer(id) {
+    const d = await this.read('risposte.json');
+    return ((d && d.risposte) || []).find((x) => x.id === id) || null;
+  }
+};
+const sleep = (ms) => new Promise((ok) => setTimeout(ok, ms));
+
+// Manda un ordine al Jarvis del PC e aspetta l'esito (o lo segue in sottofondo se è lungo).
+async function eseguiSulPC(comando) {
+  if (!cloud.token()) return 'La memoria condivisa non è collegata: serve il codice GitHub nelle impostazioni della sfera.';
+  let id;
+  try { ({ id } = await cloud.sendCommand(comando)); } catch (e) { return 'Non riesco a raggiungere il PC: ' + e.message; }
+  if (!id) return 'Memoria condivisa non pronta.';
+  setSay('Mando l\'ordine al PC…');
+  const inizio = Date.now(); let ricevuto = false;
+  while (Date.now() - inizio < 45000) {
+    await sleep(2000);
+    let r = null; try { r = await cloud.answer(id); } catch {}
+    if (!r) {
+      if (!ricevuto && Date.now() - inizio > 16000) {
+        cloud.cancelCommand(id).catch(() => {});
+        return 'Il PC non risponde: probabilmente è spento o Jarvis non è aperto. L\'ordine è stato annullato.';
+      }
+      continue;
+    }
+    ricevuto = true;
+    if (r.stato === 'fatto') return 'Il PC dice: ' + r.testo;
+    if (r.stato === 'in_corso') { seguiInSottofondo(id); return 'Il PC ci sta lavorando: ' + r.testo; }
+  }
+  seguiInSottofondo(id);
+  return 'Il PC ha ricevuto l\'ordine e ci sta ancora lavorando: avviserò il Signore quando ha finito.';
+}
+async function seguiInSottofondo(id) {
+  const inizio = Date.now();
+  while (Date.now() - inizio < 25 * 60000) {
+    await sleep(5000);
+    let r = null; try { r = await cloud.answer(id); } catch {}
+    if (r && r.stato === 'fatto') {
+      setSay(r.testo);
+      if (ws && ws.readyState === 1 && ready) {
+        ws.send(JSON.stringify({ realtimeInput: { text: '[NOTIFICA DAL PC: un lavoro che avevi chiesto è finito. '
+          + 'Riferisci al Signore in breve, a voce, questo esito] ' + r.testo } }));
+      }
+      remember('(lavoro sul PC)', r.testo);
+      return;
+    }
+  }
+}
+function pcMemoria() {
+  const pc = cloud.pc;
+  if (!pc) return '';
+  const quando = pc.aggiornato ? new Date(pc.aggiornato).toLocaleString('it-IT') : '?';
+  const az = (pc.azioni || []).slice(-15).map((x) => {
+    const d = new Date(x.t).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    return `[${d}] Signore: ${String(x.u).slice(0, 250)} | Jarvis PC: ${String(x.j).slice(0, 250)}`;
+  }).join('\n');
+  return `\nMEMORIA DEL JARVIS DEL COMPUTER (aggiornata il ${quando}): è la TUA memoria, siete lo stesso Jarvis.\n`
+    + String(pc.memoria || '').slice(0, 7000)
+    + (az ? `\nUltime cose fatte sul PC:\n${az}` : '');
 }
 function systemPrompt() {
   const notes = store.get('notes', '');
@@ -369,10 +532,16 @@ function systemPrompt() {
 Parli sempre in italiano e chiami l'utente sempre "Signore". Tono: elegante, calmo, leggermente ironico, molto competente.
 Risposte brevi e naturali, adatte a essere ascoltate a voce: niente elenchi lunghi, niente simboli, niente markdown.
 Ora ti trovi ${where}. Data e ora attuali: ${new Date().toLocaleString('it-IT')}.
-In questa versione puoi conversare, ragionare, consigliare e ricordare, ma NON puoi controllare il computer né aprire app.
-Se il Signore ti chiede di aprire app, scrivere messaggi o agire sul PC, spiegagli con garbo che questa funzione arriverà
-con il collegamento al Jarvis del computer, e intanto aiutalo come puoi.
+${cloud.token() ? `Sei collegato al Jarvis del computer del Signore tramite la funzione esegui_sul_pc: usala quando il Signore
+chiede di fare qualcosa sul PC (aprire o chiudere app, messaggi WhatsApp o Telegram, file, modpack, ricerche) o sul
+Meta Quest (aprire giochi e app nel visore, screenshot, batteria). Scrivi il comando come lo direbbe il Signore.
+Puoi passare al PC anche i suoi comandi speciali: "usa Claude ...", "ragionamento estremo ...", "implementa una nuova
+funzione ...". Prima di chiamarla di' una frase brevissima tipo "Subito, Signore". Riferisci l'esito con parole tue.
+Se il PC è spento, diglielo con garbo: tu continui a conversare e ricordare.`
+: `In questa versione NON puoi controllare il computer: se il Signore lo chiede, digli che serve il codice GitHub
+nelle impostazioni della sfera per collegarti al Jarvis del PC.`}
 Se il Signore dice "silenzio", "muto" o simili, chiama la funzione muto.
+${pcMemoria()}
 ${notes ? '\nCose che sai del Signore:\n' + notes : ''}
 ${past ? '\nUltime conversazioni con il Signore (usale come ricordi, non ripeterle):\n' + past : ''}`;
 }
@@ -416,7 +585,13 @@ function connect() {
     if (a.full) {
       setup.inputAudioTranscription = {};
       setup.outputAudioTranscription = {};
-      setup.tools = [{ functionDeclarations: [{ name: 'muto', description: 'Spegne il microfono quando il Signore chiede silenzio o muto.' }] }];
+      const fd = [{ name: 'muto', description: 'Spegne il microfono quando il Signore chiede silenzio o muto.' }];
+      if (cloud.token()) fd.push({ name: 'esegui_sul_pc', description: 'Fa eseguire un comando al Jarvis del computer del '
+        + 'Signore: app e file sul PC, messaggi, modpack, app e giochi sul Meta Quest, ricerche, comandi speciali di Jarvis.',
+        parameters: { type: 'OBJECT', properties: { comando: { type: 'STRING',
+          description: 'Il comando completo, in italiano, come lo direbbe il Signore (es. "apri Beat Saber sul Quest").' } },
+          required: ['comando'] } });
+      setup.tools = [{ functionDeclarations: fd }];
       setup.sessionResumption = resumeHandle ? { handle: resumeHandle } : {};
     }
     sock.send(JSON.stringify({ setup }));
@@ -460,11 +635,18 @@ function handle(msg) {
   }
   if (msg.goAway) { try { ws.close(); } catch {} return; }
   if (msg.toolCall && msg.toolCall.functionCalls) {
-    const responses = msg.toolCall.functionCalls.map((fc) => {
+    const sock = ws;
+    msg.toolCall.functionCalls.forEach(async (fc) => {
+      let result = 'ok';
       if (fc.name === 'muto') setTimeout(() => { if (!muted) toggleMute(); }, 1200);
-      return { id: fc.id, name: fc.name, response: { result: 'ok' } };
+      else if (fc.name === 'esegui_sul_pc') {
+        setStatus('Lavoro sul PC');
+        result = await eseguiSulPC(String((fc.args && fc.args.comando) || ''));
+        remember('(ordine al PC) ' + ((fc.args && fc.args.comando) || ''), result);
+      }
+      try { sock && sock.readyState === 1 && sock.send(JSON.stringify({ toolResponse: { functionResponses: [
+        { id: fc.id, name: fc.name, response: { result } }] } })); } catch {}
     });
-    ws.send(JSON.stringify({ toolResponse: { functionResponses: responses } }));
     return;
   }
   const sc = msg.serverContent;
@@ -500,6 +682,11 @@ async function start() {
     return;
   }
   running = true; resumeHandle = null; retries = 0;
+  if (cloud.token()) {
+    setStatus('Recupero la memoria…');
+    try { await Promise.race([cloud.sync(), sleep(8000)]); }
+    catch (e) { setSay('Memoria condivisa non disponibile: ' + e.message); }
+  }
   buildAttempts(); connect();
   ui.power.textContent = 'Spegni'; ui.power.classList.remove('main');
   ui.mute.hidden = false; refreshXRButton();
@@ -549,6 +736,8 @@ function openPanel() {
   $('voice').value = store.get('voice', 'Charon');
   $('model').value = store.get('model', 'auto');
   $('notes').value = store.get('notes', '');
+  $('gh').value = store.get('gh', '');
+  $('ghStato').textContent = cloud.repo ? 'Memoria condivisa collegata a ' + cloud.repo + '.' : $('ghStato').textContent;
   $('panel').classList.add('open');
 }
 function closePanel() { $('panel').classList.remove('open'); }
@@ -559,7 +748,11 @@ $('btnSave').onclick = () => {
   store.set('voice', $('voice').value);
   store.set('model', $('model').value);
   store.set('notes', $('notes').value.trim());
+  const nuovoGh = $('gh').value.trim();
+  if (nuovoGh !== store.get('gh', '')) { store.set('gh', nuovoGh); cloud.repo = null; cloud.pc = null; }
   closePanel();
+  if (nuovoGh) cloud.prepare().then(() => cloud.push()).then(() => setSay('Memoria condivisa collegata, Signore.'))
+    .catch((e) => setSay('Codice GitHub: ' + e.message));
   if (running) { stop(); setSay('Impostazioni salvate. Riaccendimi, Signore.'); }
   else setSay('Impostazioni salvate, Signore.');
 };
