@@ -37,6 +37,20 @@
   .hint { font-size: 13px; opacity: .65; margin-top: 6px; line-height: 1.4; }
   .row { display: flex; gap: 10px; margin-top: 22px; flex-wrap: wrap; }
   a { color: var(--c); }
+  #pcBox { position: fixed; left: 0; right: 0; top: 150px; bottom: 150px; display: none; flex-direction: column;
+    align-items: center; justify-content: center; gap: 8px; padding: 0 8px; }
+  body.pc #pcBox { display: flex; }
+  #pcScr { max-width: 100%; max-height: 100%; min-height: 0; flex: 1 1 auto; object-fit: contain; border: 1px solid rgba(63,216,255,.35);
+    border-radius: 10px; background: #010a17; touch-action: manipulation; display: none; }
+  .pcRow { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
+  .pcRow button { padding: 8px 12px; font-size: 13px; }
+  .pcRow input { flex: 1; min-width: 120px; max-width: 280px; padding: 8px 10px; }
+  #badge { display: none; margin: 6px auto 0; width: max-content; font-size: 11px; letter-spacing: .25em; color: #37ffb0;
+    border: 1px solid #37ffb0; border-radius: 999px; padding: 3px 10px; }
+  body.pc #badge { display: block; }
+  body.pc #say { display: none; }
+  #pcConf { display: none; border: 1px solid #ffb347; background: rgba(40,25,0,.9); color: #ffd27f; border-radius: 10px;
+    padding: 10px; max-width: 520px; text-align: center; }
 </style>
 <script type="importmap">
 { "imports": { "three": "https://unpkg.com/three@0.165.0/build/three.module.js" } }
@@ -48,6 +62,17 @@
   <h1>JARVIS</h1>
   <div id="status">Spento</div>
   <div id="say"></div>
+  <div id="badge">LIVE · PC</div>
+</div>
+<div id="pcBox">
+  <img id="pcScr" alt="Schermo del PC">
+  <div id="pcConf"><div id="pcConfT"></div><div class="pcRow" style="margin-top:8px">
+    <button id="pcSi">APPROVA</button><button id="pcNo">NEGA</button></div></div>
+  <div class="pcRow" id="pcTasti">
+    <button data-a="up">▲</button><button data-a="down">▼</button><button data-a="enter">Invio</button>
+    <button data-a="esc">Esc</button><button data-a="back">⌫</button><button id="pcSchermo">Schermo: ON</button>
+  </div>
+  <div class="pcRow"><input id="pcTx" placeholder="Scrivi sul PC…"><button id="pcInvia">Scrivi</button></div>
 </div>
 <div id="bar">
   <button id="btnPower" class="main">Accendi Jarvis</button>
@@ -227,6 +252,29 @@ const muteHit = new THREE.Mesh(new THREE.SphereGeometry(0.045, 10, 10), new THRE
 muteBtn.add(ring, dot, muteHit);
 orb.add(muteBtn);
 
+// schermo del PC nel visore
+const screenTex = new THREE.Texture();
+screenTex.colorSpace = THREE.SRGBColorSpace;
+const screenMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.9), new THREE.MeshBasicMaterial({ map: screenTex, transparent: true }));
+screenMesh.visible = false;
+scene.add(screenMesh);
+const confXR = makeLabel(900, 120);
+confXR.mesh.visible = false;
+scene.add(confXR.mesh);
+function mostraConfermaXR(testo) {
+  const c = confXR.ctx; c.clearRect(0, 0, 900, 120);
+  if (!testo) { confXR.mesh.visible = false; return; }
+  c.fillStyle = 'rgba(40,25,0,.92)'; c.fillRect(0, 0, 900, 120);
+  c.font = '26px Segoe UI, Roboto, sans-serif'; c.fillStyle = '#ffd27f'; c.textAlign = 'center';
+  c.fillText(String(testo).slice(0, 70), 450, 45); c.fillText('Dì «approva» o «nega» al PC', 450, 92);
+  confXR.tex.needsUpdate = true; confXR.mesh.visible = renderer.xr.isPresenting;
+}
+function layoutOrb() {
+  const pc = modo === 'pc';
+  orb.scale.setScalar(pc ? 0.5 : 1);
+  if (!renderer.xr.isPresenting) orb.position.set(0, pc ? 1.62 : 1.4, camera.aspect < 1 ? -1.45 : -0.9);
+}
+
 /* ---------------- controller e mani (WebXR) ---------------- */
 const tmpM = new THREE.Matrix4(), ray = new THREE.Raycaster();
 const lineGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -1)]);
@@ -249,6 +297,10 @@ function aim(c) {
 }
 function onSelectStart(c) {
   aim(c);
+  if (screenMesh.visible) {
+    const h = ray.intersectObject(screenMesh, false)[0];
+    if (h && h.uv) { pcInvia({ type: 'tap', kind: 'single', x: h.uv.x, y: 1 - h.uv.y }); return; }
+  }
   if (ray.intersectObject(muteHit, false).length) { toggleMute(); return; }
   if (ray.intersectObject(hit, false).length && !controllers.some((o) => o.userData.grabbing)) {
     c.attach(orb); c.userData.grabbing = true;
@@ -338,6 +390,7 @@ async function startMic() {
   srcNode.connect(micNode); micNode.connect(sink); sink.connect(micCtx.destination);
   micNode.port.onmessage = (e) => {
     micLevel = e.data.lvl;
+    if (modo === 'pc') { if (!muted && pcws && pcws.readyState === 1) pcws.send(e.data.pcm); return; }
     if (!muted && ws && ws.readyState === 1 && ready) {
       ws.send(JSON.stringify({ realtimeInput: { audio: { data: b64(e.data.pcm), mimeType: 'audio/pcm;rate=16000' } } }));
     }
@@ -667,6 +720,109 @@ function handle(msg) {
   }
 }
 
+/* ---------------- LIVE COL JARVIS DEL PC (stesso Jarvis, stessa memoria, strumenti veri, schermo) ---------------- */
+let modo = 'solo', pcws = null, schermoOn = true;
+function playInt16(buf) {
+  ensureOut();
+  const p = new Int16Array(buf); if (!p.length) return;
+  const b = outCtx.createBuffer(1, p.length, 24000); const c = b.getChannelData(0);
+  for (let k = 0; k < p.length; k++) c[k] = p[k] / 32768;
+  const src = outCtx.createBufferSource(); src.buffer = b; src.connect(outGain);
+  const t = Math.max(outCtx.currentTime + 0.03, nextTime); src.start(t); nextTime = t + b.duration;
+  playing.add(src); src.onended = () => playing.delete(src); speaking = true;
+}
+function playMp3(b64s) {
+  ensureOut();
+  const bin = atob(b64s), u = new Uint8Array(bin.length);
+  for (let k = 0; k < bin.length; k++) u[k] = bin.charCodeAt(k);
+  outCtx.decodeAudioData(u.buffer).then((b) => {
+    const src = outCtx.createBufferSource(); src.buffer = b; src.connect(outGain);
+    const t = Math.max(outCtx.currentTime + 0.03, nextTime); src.start(t); nextTime = t + b.duration;
+    playing.add(src); src.onended = () => playing.delete(src); speaking = true;
+  }).catch(() => {});
+}
+function pcInvia(o) { if (pcws && pcws.readyState === 1) pcws.send(JSON.stringify(o)); }
+function provaLivePC() {
+  const live = cloud.pc && cloud.pc.live;
+  if (!live || !live.url || !live.token) return Promise.resolve(false);
+  return new Promise((ok) => {
+    let fatto = false;
+    const sock = new WebSocket(live.url + '?t=' + encodeURIComponent(live.token));
+    sock.binaryType = 'arraybuffer';
+    const fine = (v) => { if (!fatto) { fatto = true; ok(v); } };
+    const timer = setTimeout(() => { try { sock.close(); } catch {} fine(false); }, 8000);
+    sock.onopen = () => { clearTimeout(timer); pcws = sock; entraModoPC(); fine(true); };
+    sock.onerror = () => { clearTimeout(timer); fine(false); };
+    sock.onmessage = (ev) => {
+      if (typeof ev.data !== 'string') { playInt16(ev.data); return; }
+      let m; try { m = JSON.parse(ev.data); } catch { return; }
+      if (m.type === 'frame' && schermoOn) mostraSchermo(m.jpg);
+      else if (m.type === 'mp3') playMp3(m.b64);
+      else if (m.type === 'status') { ui.say.textContent = m.text; if (/in linea/i.test(m.text)) setStatus('Live collegato'); }
+      else if (m.type === 'clear') stopPlayback();
+      else if (m.type === 'confirm') { $('pcConfT').textContent = m.text; $('pcConf').style.display = 'block'; mostraConfermaXR(m.text); }
+      else if (m.type === 'confirm_done') { $('pcConf').style.display = 'none'; mostraConfermaXR(''); }
+    };
+    sock.onclose = () => {
+      clearTimeout(timer);
+      if (pcws === sock) { pcws = null; esciModoPC(); if (running) { setSay('Live col PC chiuso: continuo da sola, Signore.');
+        buildAttempts(); connect(); } }
+      fine(false);
+    };
+  });
+}
+function entraModoPC() {
+  modo = 'pc'; ready = true; document.body.classList.add('pc');
+  setStatus('Live collegato'); ui.say.textContent = '';
+  layoutOrb();
+}
+function esciModoPC() {
+  modo = 'solo'; document.body.classList.remove('pc');
+  $('pcScr').style.display = 'none'; $('pcConf').style.display = 'none';
+  screenMesh.visible = false; mostraConfermaXR('');
+  layoutOrb();
+}
+let ultimoJpg = 0;
+function mostraSchermo(jpg) {
+  const url = 'data:image/jpeg;base64,' + jpg;
+  const im = $('pcScr'); im.src = url; im.style.display = 'block';
+  if (renderer.xr.isPresenting && performance.now() - ultimoJpg > 300) {
+    ultimoJpg = performance.now();
+    const img = new Image();
+    img.onload = () => { screenTex.image = img; screenTex.needsUpdate = true; screenMesh.visible = true;
+      const r = img.height / img.width; screenMesh.scale.set(1, r, 1); };
+    img.src = url;
+  }
+}
+// tocchi sullo schermo del PC: tocco = clic, doppio tocco = doppio clic, tieni premuto = tasto destro
+(function () {
+  const im = $('pcScr');
+  function pos(e) {
+    const r = im.getBoundingClientRect(), nw = im.naturalWidth || 1, nh = im.naturalHeight || 1;
+    const sc = Math.min(r.width / nw, r.height / nh), w = nw * sc, h = nh * sc, ox = r.left + (r.width - w) / 2, oy = r.top + (r.height - h) / 2;
+    const x = (e.clientX - ox) / w, y = (e.clientY - oy) / h;
+    return (x < 0 || x > 1 || y < 0 || y > 1) ? null : { x, y };
+  }
+  let tapT = null, pressT = null, lungo = false, ultimo = null;
+  im.addEventListener('pointerdown', (e) => { ultimo = pos(e); lungo = false; clearTimeout(pressT);
+    pressT = setTimeout(() => { if (ultimo) { lungo = true; pcInvia({ type: 'tap', kind: 'right', x: ultimo.x, y: ultimo.y });
+      if (navigator.vibrate) navigator.vibrate(30); } }, 600); });
+  im.addEventListener('pointerup', (e) => { clearTimeout(pressT); if (lungo) return; const p = pos(e); if (!p) return;
+    if (tapT) { clearTimeout(tapT); tapT = null; pcInvia({ type: 'tap', kind: 'double', x: p.x, y: p.y }); }
+    else tapT = setTimeout(() => { tapT = null; pcInvia({ type: 'tap', kind: 'single', x: p.x, y: p.y }); }, 280); });
+  im.addEventListener('contextmenu', (e) => e.preventDefault());
+  document.querySelectorAll('#pcTasti button[data-a]').forEach((b) => b.onclick = () => {
+    const a = b.dataset.a;
+    if (a === 'up') pcInvia({ type: 'scroll', d: 3 }); else if (a === 'down') pcInvia({ type: 'scroll', d: -3 });
+    else pcInvia({ type: 'key', k: a === 'back' ? 'backspace' : a });
+  });
+  $('pcInvia').onclick = () => { const t = $('pcTx').value; if (t) { pcInvia({ type: 'text', t }); $('pcTx').value = ''; } };
+  $('pcSchermo').onclick = () => { schermoOn = !schermoOn; $('pcSchermo').textContent = 'Schermo: ' + (schermoOn ? 'ON' : 'OFF');
+    pcInvia({ type: 'screen', on: schermoOn }); if (!schermoOn) { im.style.display = 'none'; screenMesh.visible = false; } };
+  $('pcSi').onclick = () => { pcInvia({ type: 'confirm', ok: true }); $('pcConf').style.display = 'none'; };
+  $('pcNo').onclick = () => { pcInvia({ type: 'confirm', ok: false }); $('pcConf').style.display = 'none'; };
+})();
+
 /* ---------------- comandi ---------------- */
 async function start() {
   if (running) return;
@@ -686,6 +842,14 @@ async function start() {
     setStatus('Recupero la memoria…');
     try { await Promise.race([cloud.sync(), sleep(8000)]); }
     catch (e) { setSay('Memoria condivisa non disponibile: ' + e.message); }
+    if (store.get('livePC', true) && cloud.pc && cloud.pc.live) {
+      setStatus('Cerco il Jarvis del PC…');
+      if (await provaLivePC()) {
+        ui.power.textContent = 'Spegni'; ui.power.classList.remove('main');
+        ui.mute.hidden = false; refreshXRButton();
+        return;
+      }
+    }
   }
   buildAttempts(); connect();
   ui.power.textContent = 'Spegni'; ui.power.classList.remove('main');
@@ -694,6 +858,8 @@ async function start() {
 function stop() {
   running = false; ready = false;
   const s = ws; ws = null; try { s && s.close(); } catch {}
+  const p = pcws; pcws = null; try { p && p.close(); } catch {}
+  esciModoPC();
   stopMic(); stopPlayback(); speaking = false;
   ui.power.textContent = 'Accendi Jarvis'; ui.power.classList.add('main');
   ui.mute.hidden = true; ui.xr.hidden = true;
@@ -767,7 +933,7 @@ function onResize() {
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
   uniforms.uScale.value = (window.innerHeight * renderer.getPixelRatio()) / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)));
-  if (!renderer.xr.isPresenting) orb.position.set(0, 1.4, camera.aspect < 1 ? -1.45 : -0.9);
+  layoutOrb();
 }
 window.addEventListener('resize', onResize);
 onResize();
@@ -798,6 +964,14 @@ renderer.setAnimationLoop(() => {
       orb.position.z = THREE.MathUtils.clamp(orb.position.z + gp.axes[3] * dt * 0.8, -2.5, -0.15);
     }
   });
+  if (screenMesh.visible) {          // il pannello dello schermo segue la sfera, alla sua destra
+    const op = new THREE.Vector3().setFromMatrixPosition(orb.matrixWorld);
+    const dir = new THREE.Vector3().subVectors(cp, op).setY(0).normalize();
+    const destra = new THREE.Vector3(-dir.z, 0, dir.x);
+    screenMesh.position.copy(op).addScaledVector(destra, -0.62).add(new THREE.Vector3(0, 0.05, 0));
+    screenMesh.lookAt(cp);
+    confXR.mesh.position.copy(op).add(new THREE.Vector3(0, -0.32, 0)); confXR.mesh.lookAt(cp);
+  }
   renderer.render(scene, camera);
 });
 function setStatusLight(s) { if (s !== lastLight) setStatus(s); }
