@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <meta name="theme-color" content="#02060c">
+<meta name="jarvis-sfera" content="2026-11-04.1">
 <meta name="mobile-web-app-capable" content="yes">
 <title>J.A.R.V.I.S.</title>
 <style>
@@ -40,8 +41,18 @@
   #pcBox { position: fixed; left: 0; right: 0; top: 150px; bottom: 150px; display: none; flex-direction: column;
     align-items: center; justify-content: center; gap: 8px; padding: 0 8px; }
   body.pc #pcBox { display: flex; }
-  #pcScr { max-width: 100%; max-height: 100%; min-height: 0; flex: 1 1 auto; object-fit: contain; border: 1px solid rgba(63,216,255,.35);
-    border-radius: 10px; background: #010a17; touch-action: manipulation; display: none; }
+  #pcWrap { position: relative; flex: 1 1 auto; min-height: 0; width: 100%; display: flex; align-items: center; justify-content: center; }
+  #pcScr { max-width: 100%; max-height: 100%; min-height: 0; object-fit: contain; border: 1px solid rgba(63,216,255,.35);
+    border-radius: 10px; background: #010a17; touch-action: pan-y; display: none; }
+  .pcFreccia { position: absolute; top: 50%; transform: translateY(-50%); width: 46px; height: 70px; padding: 0; font-size: 34px;
+    line-height: 1; border-radius: 12px; background: rgba(2,18,38,.78); color: var(--c); border: 1px solid rgba(63,216,255,.55);
+    display: none; z-index: 3; }
+  #pcSx { left: 2px; } #pcDx { right: 2px; }
+  body.due .pcFreccia { display: block; }
+  #pcNome { font-size: 12px; letter-spacing: .22em; color: #37ffb0; min-height: 15px; text-align: center; }
+  #pcMini { position: absolute; right: 54px; bottom: 6px; width: 30%; max-width: 190px; border: 1px solid #37ffb0;
+    border-radius: 6px; display: none; z-index: 2; background: #010a17; }
+  body.due #pcMini.ha { display: block; }
   .pcRow { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
   .pcRow button { padding: 8px 12px; font-size: 13px; }
   .pcRow input { flex: 1; min-width: 120px; max-width: 280px; padding: 8px 10px; }
@@ -65,7 +76,13 @@
   <div id="badge">LIVE · PC</div>
 </div>
 <div id="pcBox">
-  <img id="pcScr" alt="Schermo del PC">
+  <div id="pcNome"></div>
+  <div id="pcWrap">
+    <button class="pcFreccia" id="pcSx" aria-label="Schermo precedente">‹</button>
+    <img id="pcScr" alt="Schermo del PC">
+    <img id="pcMini" alt="L'altro PC">
+    <button class="pcFreccia" id="pcDx" aria-label="Schermo successivo">›</button>
+  </div>
   <div id="pcConf"><div id="pcConfT"></div><div class="pcRow" style="margin-top:8px">
     <button id="pcSi">APPROVA</button><button id="pcNo">NEGA</button></div></div>
   <div class="pcRow" id="pcTasti">
@@ -756,7 +773,11 @@ function provaLivePC() {
     sock.onmessage = (ev) => {
       if (typeof ev.data !== 'string') { playInt16(ev.data); return; }
       let m; try { m = JSON.parse(ev.data); } catch { return; }
-      if (m.type === 'frame' && schermoOn) mostraSchermo(m.jpg);
+      if (m.type === 'frame' && schermoOn) { mostraSchermo(m.jpg);
+        if (m.pc && m.pc !== schermi.attivo) aggiornaSchermi({ lista: schermi.lista, attivo: m.pc }); }
+      else if (m.type === 'frame2' && schermoOn && schermi.lista.length > 1) {
+        const mi = $('pcMini'); mi.src = 'data:image/jpeg;base64,' + m.jpg; mi.classList.add('ha'); }
+      else if (m.type === 'schermi') aggiornaSchermi(m);
       else if (m.type === 'mp3') playMp3(m.b64);
       else if (m.type === 'status') { ui.say.textContent = m.text; if (/in linea/i.test(m.text)) setStatus('Live collegato'); }
       else if (m.type === 'clear') stopPlayback();
@@ -780,8 +801,29 @@ function esciModoPC() {
   modo = 'solo'; document.body.classList.remove('pc');
   $('pcScr').style.display = 'none'; $('pcConf').style.display = 'none';
   screenMesh.visible = false; mostraConfermaXR('');
+  aggiornaSchermi({ lista: [], attivo: '' });
   layoutOrb();
 }
+// più PC accesi (Lenovo e fisso): frecce o scorrimento per scegliere quale guardare e comandare
+let schermi = { lista: [], attivo: '' };
+const NOMI_PC = { lenovo: 'LENOVO', fisso: 'PC FISSO' };
+function aggiornaSchermi(m) {
+  schermi = { lista: (m && m.lista) || [], attivo: (m && m.attivo) || '' };
+  const due = schermi.lista.length > 1;
+  document.body.classList.toggle('due', due);
+  const nome = NOMI_PC[schermi.attivo] || '';
+  $('pcNome').textContent = nome ? '◉ ' + nome + (due ? '   ‹ › per cambiare' : '') : '';
+  if (!due) { $('pcMini').classList.remove('ha'); $('pcMini').removeAttribute('src'); }
+}
+function cambiaSchermo(pc) {
+  if (schermi.lista.length < 2) return;
+  pcInvia({ type: 'schermo', pc: pc || 'altro' });
+  $('pcNome').textContent = '◉ CAMBIO SCHERMO…';
+  if (navigator.vibrate) navigator.vibrate(15);
+}
+$('pcSx').onclick = () => cambiaSchermo('altro');
+$('pcDx').onclick = () => cambiaSchermo('altro');
+$('pcMini').onclick = () => cambiaSchermo('altro');
 let ultimoJpg = 0;
 function mostraSchermo(jpg) {
   const url = 'data:image/jpeg;base64,' + jpg;
@@ -803,11 +845,17 @@ function mostraSchermo(jpg) {
     const x = (e.clientX - ox) / w, y = (e.clientY - oy) / h;
     return (x < 0 || x > 1 || y < 0 || y > 1) ? null : { x, y };
   }
-  let tapT = null, pressT = null, lungo = false, ultimo = null;
-  im.addEventListener('pointerdown', (e) => { ultimo = pos(e); lungo = false; clearTimeout(pressT);
+  let tapT = null, pressT = null, lungo = false, ultimo = null, giu = null;
+  im.addEventListener('pointerdown', (e) => { ultimo = pos(e); lungo = false; clearTimeout(pressT); giu = { x: e.clientX, y: e.clientY };
     pressT = setTimeout(() => { if (ultimo) { lungo = true; pcInvia({ type: 'tap', kind: 'right', x: ultimo.x, y: ultimo.y });
       if (navigator.vibrate) navigator.vibrate(30); } }, 600); });
-  im.addEventListener('pointerup', (e) => { clearTimeout(pressT); if (lungo) return; const p = pos(e); if (!p) return;
+  im.addEventListener('pointermove', (e) => { if (giu && Math.abs(e.clientX - giu.x) > 25) clearTimeout(pressT); });
+  im.addEventListener('pointerup', (e) => { clearTimeout(pressT); if (lungo) return;
+    if (giu && schermi.lista.length > 1) {        // scorrimento a destra/sinistra = cambia PC
+      const dx = e.clientX - giu.x, dy = e.clientY - giu.y; giu = null;
+      if (Math.abs(dx) > 80 && Math.abs(dx) > Math.abs(dy) * 1.5) { cambiaSchermo('altro'); return; }
+    }
+    const p = pos(e); if (!p) return;
     if (tapT) { clearTimeout(tapT); tapT = null; pcInvia({ type: 'tap', kind: 'double', x: p.x, y: p.y }); }
     else tapT = setTimeout(() => { tapT = null; pcInvia({ type: 'tap', kind: 'single', x: p.x, y: p.y }); }, 280); });
   im.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -822,6 +870,28 @@ function mostraSchermo(jpg) {
   $('pcSi').onclick = () => { pcInvia({ type: 'confirm', ok: true }); $('pcConf').style.display = 'none'; };
   $('pcNo').onclick = () => { pcInvia({ type: 'confirm', ok: false }); $('pcConf').style.display = 'none'; };
 })();
+
+/* ---------------- un Jarvis del PC si è acceso? la sfera ci si collega da sola ---------------- */
+let livePCProvato = '', livePCQuando = 0, cercoPC = false;
+setInterval(async () => {
+  if (!running || modo === 'pc' || cercoPC || !cloud.token() || !store.get('livePC', true)) return;
+  cercoPC = true;
+  try {
+    if (!(await cloud.prepare())) return;
+    const pc = await cloud.read('pc.json');
+    if (pc) cloud.pc = pc;
+    const live = pc && pc.live;
+    if (!live || !live.url || !live.token) return;
+    if (live.url === livePCProvato && Date.now() - livePCQuando < 120000) return;
+    livePCProvato = live.url; livePCQuando = Date.now();
+    const solo = ws;
+    if (await provaLivePC()) {
+      ws = null; try { solo && solo.close(); } catch {}
+      stopPlayback();
+    }
+  } catch (e) { console.warn('cerco il Jarvis del PC:', e); }
+  finally { cercoPC = false; }
+}, 30000);
 
 /* ---------------- comandi ---------------- */
 async function start() {
@@ -844,6 +914,7 @@ async function start() {
     catch (e) { setSay('Memoria condivisa non disponibile: ' + e.message); }
     if (store.get('livePC', true) && cloud.pc && cloud.pc.live) {
       setStatus('Cerco il Jarvis del PC…');
+      livePCProvato = cloud.pc.live.url; livePCQuando = Date.now();
       if (await provaLivePC()) {
         ui.power.textContent = 'Spegni'; ui.power.classList.remove('main');
         ui.mute.hidden = false; refreshXRButton();
