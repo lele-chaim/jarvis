@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <meta name="theme-color" content="#02060c">
-<meta name="jarvis-sfera" content="2026-11-04.1">
+<meta name="jarvis-sfera" content="2026-11-06.2">
 <meta name="mobile-web-app-capable" content="yes">
 <title>J.A.R.V.I.S.</title>
 <style>
@@ -151,6 +151,7 @@ const store = {
 };
 
 const $ = (id) => document.getElementById(id);
+const SONO_QUEST = /OculusBrowser|Quest|Meta Horizon/i.test(navigator.userAgent);
 const ui = { status: $('status'), say: $('say'), power: $('btnPower'), mute: $('btnMute'), xr: $('btnXR') };
 
 /* ---------------- scena 3D ---------------- */
@@ -275,6 +276,26 @@ screenTex.colorSpace = THREE.SRGBColorSpace;
 const screenMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.9), new THREE.MeshBasicMaterial({ map: screenTex, transparent: true }));
 screenMesh.visible = false;
 scene.add(screenMesh);
+function freccia(simbolo) {
+  const l = makeLabel(120, 160);
+  l.ctx.fillStyle = 'rgba(2,18,38,.85)'; l.ctx.fillRect(0, 0, 120, 160);
+  l.ctx.strokeStyle = '#3fd8ff'; l.ctx.lineWidth = 4; l.ctx.strokeRect(2, 2, 116, 156);
+  l.ctx.font = '110px Segoe UI, Roboto, sans-serif'; l.ctx.fillStyle = '#3fd8ff';
+  l.ctx.textAlign = 'center'; l.ctx.textBaseline = 'middle'; l.ctx.fillText(simbolo, 60, 84);
+  l.tex.needsUpdate = true; l.mesh.visible = false; scene.add(l.mesh); return l;
+}
+const frecciaSx = freccia('‹'), frecciaDx = freccia('›');
+const nomeXR = makeLabel(600, 70);
+nomeXR.mesh.visible = false; scene.add(nomeXR.mesh);
+function scriviNomeXR(t) {
+  const c = nomeXR.ctx; c.clearRect(0, 0, 600, 70);
+  c.font = '36px Segoe UI, Roboto, sans-serif'; c.fillStyle = '#37ffb0'; c.textAlign = 'center'; c.textBaseline = 'middle';
+  c.fillText(t || '', 300, 36); nomeXR.tex.needsUpdate = true;
+}
+// link pronto da aprire (ricerche sul web quando non c'è il PC)
+const linkXR = makeLabel(900, 120);
+linkXR.mesh.visible = false; scene.add(linkXR.mesh);
+let linkPronto = null;
 const confXR = makeLabel(900, 120);
 confXR.mesh.visible = false;
 scene.add(confXR.mesh);
@@ -314,6 +335,10 @@ function aim(c) {
 }
 function onSelectStart(c) {
   aim(c);
+  if (linkXR.mesh.visible && ray.intersectObject(linkXR.mesh, false).length) { apriLinkOra(); return; }
+  if (frecciaSx.mesh.visible && (ray.intersectObject(frecciaSx.mesh, false).length || ray.intersectObject(frecciaDx.mesh, false).length)) {
+    cambiaSchermo('altro'); return;
+  }
   if (screenMesh.visible) {
     const h = ray.intersectObject(screenMesh, false)[0];
     if (h && h.uv) { pcInvia({ type: 'tap', kind: 'single', x: h.uv.x, y: 1 - h.uv.y }); return; }
@@ -538,6 +563,26 @@ const cloud = {
 const sleep = (ms) => new Promise((ok) => setTimeout(ok, ms));
 
 // Manda un ordine al Jarvis del PC e aspetta l'esito (o lo segue in sottofondo se è lungo).
+function apriLink(url, titolo) {
+  linkPronto = url;
+  let w = null;
+  if (!renderer.xr.isPresenting) { try { w = window.open(url, '_blank', 'noopener'); } catch {} }
+  if (w) { linkPronto = null; return 'Aperto in una nuova scheda.'; }
+  // il browser ha bloccato l'apertura automatica: il Signore la apre con un tocco
+  ui.say.innerHTML = ''; const a = document.createElement('a'); a.href = url; a.target = '_blank'; a.rel = 'noopener';
+  a.textContent = '↗ ' + titolo; a.style.color = '#37ffb0'; a.onclick = () => { linkPronto = null; linkXR.mesh.visible = false; };
+  ui.say.appendChild(a);
+  const c = linkXR.ctx; c.clearRect(0, 0, 900, 120); c.fillStyle = 'rgba(2,30,20,.92)'; c.fillRect(0, 0, 900, 120);
+  c.font = '30px Segoe UI, Roboto, sans-serif'; c.fillStyle = '#37ffb0'; c.textAlign = 'center';
+  c.fillText(String(titolo).slice(0, 48), 450, 48); c.fillText('Punta qui e premi il grilletto per aprirlo', 450, 96);
+  linkXR.tex.needsUpdate = true; linkXR.mesh.visible = renderer.xr.isPresenting;
+  return 'Pronto: il Signore deve toccare il link che compare (il browser non lo apre da solo).';
+}
+function apriLinkOra() {
+  if (!linkPronto) return;
+  const u = linkPronto; linkPronto = null; linkXR.mesh.visible = false;
+  try { window.open(u, '_blank', 'noopener'); } catch {}
+}
 async function eseguiSulPC(comando) {
   if (!cloud.token()) return 'La memoria condivisa non è collegata: serve il codice GitHub nelle impostazioni della sfera.';
   let id;
@@ -610,6 +655,8 @@ funzione ...". Prima di chiamarla di' una frase brevissima tipo "Subito, Signore
 Se il PC è spento, diglielo con garbo: tu continui a conversare e ricordare.`
 : `In questa versione NON puoi controllare il computer: se il Signore lo chiede, digli che serve il codice GitHub
 nelle impostazioni della sfera per collegarti al Jarvis del PC.`}
+Per cercare qualcosa sul web o aprire un sito QUI (sul telefono o nel visore) usa cerca_web o apri_sito.
+${SONO_QUEST ? 'Il Signore ti usa dal visore Meta Quest: per aprire app o giochi nel visore usa esegui_sul_pc (es. "apri Beat Saber sul Quest").' : ''}
 Se il Signore dice "silenzio", "muto" o simili, chiama la funzione muto.
 ${pcMemoria()}
 ${notes ? '\nCose che sai del Signore:\n' + notes : ''}
@@ -655,7 +702,11 @@ function connect() {
     if (a.full) {
       setup.inputAudioTranscription = {};
       setup.outputAudioTranscription = {};
-      const fd = [{ name: 'muto', description: 'Spegne il microfono quando il Signore chiede silenzio o muto.' }];
+      const fd = [{ name: 'muto', description: 'Spegne il microfono quando il Signore chiede silenzio o muto.' },
+        { name: 'cerca_web', description: 'Cerca qualcosa sul web e apre i risultati di Google qui (nel browser del '
+          + 'telefono o del visore).', parameters: { type: 'OBJECT', properties: { cosa: { type: 'STRING' } }, required: ['cosa'] } },
+        { name: 'apri_sito', description: 'Apre un sito qui nel browser del telefono o del visore (es. youtube.com).',
+          parameters: { type: 'OBJECT', properties: { indirizzo: { type: 'STRING' } }, required: ['indirizzo'] } }];
       if (cloud.token()) fd.push({ name: 'esegui_sul_pc', description: 'Fa eseguire un comando al Jarvis del computer del '
         + 'Signore: app e file sul PC, messaggi, modpack, app e giochi sul Meta Quest, ricerche, comandi speciali di Jarvis.',
         parameters: { type: 'OBJECT', properties: { comando: { type: 'STRING',
@@ -709,6 +760,8 @@ function handle(msg) {
     msg.toolCall.functionCalls.forEach(async (fc) => {
       let result = 'ok';
       if (fc.name === 'muto') setTimeout(() => { if (!muted) toggleMute(); }, 1200);
+      else if (fc.name === 'cerca_web') result = apriLink('https://www.google.com/search?q=' + encodeURIComponent(String((fc.args && fc.args.cosa) || '')), 'Risultati: ' + ((fc.args && fc.args.cosa) || ''));
+      else if (fc.name === 'apri_sito') { let u = String((fc.args && fc.args.indirizzo) || '').trim(); if (!/^https?:\/\//i.test(u)) u = 'https://' + u; result = apriLink(u, u); }
       else if (fc.name === 'esegui_sul_pc') {
         setStatus('Lavoro sul PC');
         result = await eseguiSulPC(String((fc.args && fc.args.comando) || ''));
@@ -764,7 +817,7 @@ function provaLivePC() {
   if (!live || !live.url || !live.token) return Promise.resolve(false);
   return new Promise((ok) => {
     let fatto = false;
-    const sock = new WebSocket(live.url + '?t=' + encodeURIComponent(live.token));
+    const sock = new WebSocket(live.url + '?t=' + encodeURIComponent(live.token) + (SONO_QUEST ? '&quest=1' : ''));
     sock.binaryType = 'arraybuffer';
     const fine = (v) => { if (!fatto) { fatto = true; ok(v); } };
     const timer = setTimeout(() => { try { sock.close(); } catch {} fine(false); }, 8000);
@@ -806,13 +859,14 @@ function esciModoPC() {
 }
 // più PC accesi (Lenovo e fisso): frecce o scorrimento per scegliere quale guardare e comandare
 let schermi = { lista: [], attivo: '' };
-const NOMI_PC = { lenovo: 'LENOVO', fisso: 'PC FISSO' };
+const NOMI_PC = { lenovo: 'LENOVO', fisso: 'PC FISSO', quest: 'META QUEST' };
 function aggiornaSchermi(m) {
   schermi = { lista: (m && m.lista) || [], attivo: (m && m.attivo) || '' };
   const due = schermi.lista.length > 1;
   document.body.classList.toggle('due', due);
   const nome = NOMI_PC[schermi.attivo] || '';
   $('pcNome').textContent = nome ? '◉ ' + nome + (due ? '   ‹ › per cambiare' : '') : '';
+  scriviNomeXR(nome ? '◉ ' + nome : '');
   if (!due) { $('pcMini').classList.remove('ha'); $('pcMini').removeAttribute('src'); }
 }
 function cambiaSchermo(pc) {
@@ -1042,6 +1096,19 @@ renderer.setAnimationLoop(() => {
     screenMesh.position.copy(op).addScaledVector(destra, -0.62).add(new THREE.Vector3(0, 0.05, 0));
     screenMesh.lookAt(cp);
     confXR.mesh.position.copy(op).add(new THREE.Vector3(0, -0.32, 0)); confXR.mesh.lookAt(cp);
+    const due = renderer.xr.isPresenting && schermi.lista.length > 1;
+    const mezzo = 0.47 * screenMesh.scale.x;
+    [[frecciaSx, -1], [frecciaDx, 1]].forEach(([f, lato]) => {
+      f.mesh.visible = due;
+      f.mesh.position.copy(screenMesh.position).addScaledVector(destra, lato * (mezzo + 0.07)); f.mesh.lookAt(cp);
+    });
+    nomeXR.mesh.visible = renderer.xr.isPresenting && !!schermi.attivo;
+    nomeXR.mesh.position.copy(screenMesh.position).add(new THREE.Vector3(0, 0.47 * screenMesh.scale.y + 0.05, 0));
+    nomeXR.mesh.lookAt(cp);
+  } else { frecciaSx.mesh.visible = frecciaDx.mesh.visible = nomeXR.mesh.visible = false; }
+  if (linkXR.mesh.visible) {
+    const op = new THREE.Vector3().setFromMatrixPosition(orb.matrixWorld);
+    linkXR.mesh.position.copy(op).add(new THREE.Vector3(0, -0.45, 0)); linkXR.mesh.lookAt(cp);
   }
   renderer.render(scene, camera);
 });
