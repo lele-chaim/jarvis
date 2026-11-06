@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <meta name="theme-color" content="#02060c">
-<meta name="jarvis-sfera" content="2026-11-06.2">
+<meta name="jarvis-sfera" content="2026-11-06.3">
 <meta name="mobile-web-app-capable" content="yes">
 <title>J.A.R.V.I.S.</title>
 <style>
@@ -152,6 +152,10 @@ const store = {
 
 const $ = (id) => document.getElementById(id);
 const SONO_QUEST = /OculusBrowser|Quest|Meta Horizon/i.test(navigator.userAgent);
+function dispositivo() { return renderer.xr.isPresenting ? 'xr' : (SONO_QUEST ? 'quest' : 'telefono'); }
+const PRIO_DI = { xr: 3, telefono: 2, quest: 1 };
+const NOMI_DISP = { xr: 'il Meta Quest', quest: 'il Meta Quest', telefono: 'il telefono' };
+let attesaDi = '';           // se un altro dispositivo sta parlando con Jarvis, questa sfera aspetta in silenzio
 const ui = { status: $('status'), say: $('say'), power: $('btnPower'), mute: $('btnMute'), xr: $('btnXR') };
 
 /* ---------------- scena 3D ---------------- */
@@ -308,7 +312,7 @@ function mostraConfermaXR(testo) {
   confXR.tex.needsUpdate = true; confXR.mesh.visible = renderer.xr.isPresenting;
 }
 function layoutOrb() {
-  const pc = modo === 'pc';
+  const pc = modo === 'pc' && !renderer.xr.isPresenting;
   orb.scale.setScalar(pc ? 0.5 : 1);
   if (!renderer.xr.isPresenting) orb.position.set(0, pc ? 1.62 : 1.4, camera.aspect < 1 ? -1.45 : -0.9);
 }
@@ -817,7 +821,9 @@ function provaLivePC() {
   if (!live || !live.url || !live.token) return Promise.resolve(false);
   return new Promise((ok) => {
     let fatto = false;
-    const sock = new WebSocket(live.url + '?t=' + encodeURIComponent(live.token) + (SONO_QUEST ? '&quest=1' : ''));
+    attesaDi = '';
+    const sock = new WebSocket(live.url + '?t=' + encodeURIComponent(live.token) + (SONO_QUEST ? '&quest=1' : '')
+      + '&disp=' + dispositivo());
     sock.binaryType = 'arraybuffer';
     const fine = (v) => { if (!fatto) { fatto = true; ok(v); } };
     const timer = setTimeout(() => { try { sock.close(); } catch {} fine(false); }, 8000);
@@ -826,7 +832,8 @@ function provaLivePC() {
     sock.onmessage = (ev) => {
       if (typeof ev.data !== 'string') { playInt16(ev.data); return; }
       let m; try { m = JSON.parse(ev.data); } catch { return; }
-      if (m.type === 'frame' && schermoOn) { mostraSchermo(m.jpg);
+      if (m.type === 'ceduto' || m.type === 'occupato') { attesaDi = m.a || m.da || 'telefono'; return; }
+      if (m.type === 'frame' && schermoOn && !renderer.xr.isPresenting) { mostraSchermo(m.jpg);
         if (m.pc && m.pc !== schermi.attivo) aggiornaSchermi({ lista: schermi.lista, attivo: m.pc }); }
       else if (m.type === 'frame2' && schermoOn && schermi.lista.length > 1) {
         const mi = $('pcMini'); mi.src = 'data:image/jpeg;base64,' + m.jpg; mi.classList.add('ha'); }
@@ -839,15 +846,42 @@ function provaLivePC() {
     };
     sock.onclose = () => {
       clearTimeout(timer);
-      if (pcws === sock) { pcws = null; esciModoPC(); if (running) { setSay('Live col PC chiuso: continuo da sola, Signore.');
-        buildAttempts(); connect(); } }
+      if (pcws === sock) { pcws = null; esciModoPC();
+        if (running && attesaDi) entraAttesa(attesaDi);
+        else if (running) { setSay('Live col PC chiuso: continuo da sola, Signore.'); buildAttempts(); connect(); } }
       fine(false);
     };
   });
 }
+function entraAttesa(chi) {
+  const s = ws; ws = null; try { s && s.close(); } catch {}
+  modo = 'attesa'; ready = false; stopPlayback(); attesaFalliti = 0;
+  setStatus('In pausa');
+  setSay('Ora con Jarvis sta parlando ' + (NOMI_DISP[chi] || 'un altro dispositivo') + ', Signore. Riprendo da sola quando ha finito.');
+}
+// in pausa: ogni 10 secondi guardo se tocca di nuovo a me
+let attesaFalliti = 0, guardoAttesa = false;
+setInterval(async () => {
+  if (!running || modo !== 'attesa' || guardoAttesa) return;
+  guardoAttesa = true;
+  try {
+    const live = cloud.pc && cloud.pc.live;
+    if (!live || !live.url) throw new Error('nessun link');
+    const u = live.url.replace(/^ws/, 'http').replace(/\/ws(\?.*)?$/, '/live_stato') + '?t=' + encodeURIComponent(live.token);
+    const r = await fetch(u, { cache: 'no-store' });
+    if (!r.ok) throw new Error('stato ' + r.status);
+    const st = await r.json(); attesaFalliti = 0;
+    if ((PRIO_DI[dispositivo()] || 2) > (st.prio || 0)) await provaLivePC();
+  } catch (e) {
+    if (++attesaFalliti >= 3 && running && modo === 'attesa') {      // il PC non risponde più: continuo da sola
+      modo = 'solo'; setSay('Il Jarvis del PC non risponde: continuo da sola, Signore.'); buildAttempts(); connect();
+    }
+  } finally { guardoAttesa = false; }
+}, 10000);
 function entraModoPC() {
   modo = 'pc'; ready = true; document.body.classList.add('pc');
   setStatus('Live collegato'); ui.say.textContent = '';
+  if (renderer.xr.isPresenting) setTimeout(() => pcInvia({ type: 'screen', on: false }), 300);
   layoutOrb();
 }
 function esciModoPC() {
@@ -928,7 +962,7 @@ function mostraSchermo(jpg) {
 /* ---------------- un Jarvis del PC si è acceso? la sfera ci si collega da sola ---------------- */
 let livePCProvato = '', livePCQuando = 0, cercoPC = false;
 setInterval(async () => {
-  if (!running || modo === 'pc' || cercoPC || !cloud.token() || !store.get('livePC', true)) return;
+  if (!running || modo !== 'solo' || cercoPC || !cloud.token() || !store.get('livePC', true)) return;
   cercoPC = true;
   try {
     if (!(await cloud.prepare())) return;
@@ -987,7 +1021,7 @@ function stop() {
   esciModoPC();
   stopMic(); stopPlayback(); speaking = false;
   ui.power.textContent = 'Accendi Jarvis'; ui.power.classList.add('main');
-  ui.mute.hidden = true; ui.xr.hidden = true;
+  ui.mute.hidden = true; refreshXRButton();
   setStatus('Spento');
 }
 function toggleMute() {
@@ -1004,20 +1038,41 @@ let xrOK = false;
 if (navigator.xr) {
   navigator.xr.isSessionSupported('immersive-ar').then((ok) => { xrOK = ok; refreshXRButton(); }).catch(() => {});
 }
-function refreshXRButton() { ui.xr.hidden = !(xrOK && running); }
+function refreshXRButton() { ui.xr.hidden = !xrOK; }
 async function enterXR() {
+  if (renderer.xr.isPresenting) return;
+  try { ensureOut(); outCtx.resume(); } catch {}
+  let session;
   try {
-    const session = await navigator.xr.requestSession('immersive-ar', {
+    session = await navigator.xr.requestSession('immersive-ar', {
       requiredFeatures: ['local-floor'], optionalFeatures: ['hand-tracking']
     });
-    renderer.xr.setReferenceSpaceType('local-floor');
-    await renderer.xr.setSession(session);
-    uniforms.uScale.value = 1100;
-    const saved = store.get('orbPos', null);
-    if (saved) orb.position.fromArray(saved); else orb.position.set(0, 1.35, -0.75);
-    session.addEventListener('end', () => { scene.attach(orb); controllers.forEach((c) => (c.userData.grabbing = false)); setTimeout(onResize, 50); });
   } catch (e) {
-    setSay('Non riesco a entrare nella stanza: ' + (e && e.message ? e.message : e));
+    try {                                            // alcuni browser non danno «local-floor»: provo senza
+      session = await navigator.xr.requestSession('immersive-ar', { optionalFeatures: ['local-floor', 'hand-tracking'] });
+    } catch (e2) { setSay('Non riesco a entrare nella stanza: ' + (e2 && e2.message ? e2.message : e2)); return; }
+  }
+  try {
+    try { renderer.xr.setReferenceSpaceType('local-floor'); await renderer.xr.setSession(session); }
+    catch { renderer.xr.setReferenceSpaceType('local'); await renderer.xr.setSession(session); }
+  } catch (e) { setSay('Non riesco a entrare nella stanza: ' + (e && e.message ? e.message : e)); return; }
+  uniforms.uScale.value = 1100;
+  const saved = store.get('orbPos', null);
+  if (saved) orb.position.fromArray(saved); else orb.position.set(0, 1.35, -0.75);
+  orb.scale.setScalar(1);
+  screenMesh.visible = false; $('pcScr').style.display = 'none';
+  session.addEventListener('end', () => {
+    scene.attach(orb); controllers.forEach((c) => (c.userData.grabbing = false)); setTimeout(onResize, 50);
+    linkXR.mesh.visible = false;
+    if (modo === 'pc') { pcInvia({ type: 'dispositivo', disp: dispositivo() }); if (schermoOn) pcInvia({ type: 'screen', on: true }); }
+    layoutOrb();
+  });
+  // il visore diventa il centro di tutto
+  if (!running) { await start(); return; }
+  if (modo === 'pc') { pcInvia({ type: 'dispositivo', disp: 'xr' }); pcInvia({ type: 'screen', on: false }); }
+  else if (cloud.token() && cloud.pc && cloud.pc.live) {
+    const solo = ws;
+    if (await provaLivePC()) { ws = null; try { solo && solo.close(); } catch {} stopPlayback(); }
   }
 }
 
